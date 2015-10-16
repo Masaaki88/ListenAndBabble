@@ -10,6 +10,7 @@ The code is written in Python 2.7 and was tested in Ubuntu 14.04. Apart from sta
 - brian
 - Oger
 - mpi4py
+
 Additionally, you'll need the VocalTractLab API for Linux, which you can download here:
-http://vocaltractlab.de/index.php?page=vocaltractlab-download
+http://vocaltractlab.de/index.php?page=vocaltractlab-download.
 After downloading it, extract the content into the VTL_API subfolder.

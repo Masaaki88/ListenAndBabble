@@ -13,3 +13,5 @@ The code is written in Python 2.7 and was tested in Ubuntu 14.04. Apart from sta
 
 Additionally, you'll need the VocalTractLab API for Linux, which you can download [here](http://vocaltractlab.de/index.php?page=vocaltractlab-download).
 After downloading it, extract the content into the VTL_API subfolder.
+
+example.py provides a step-by-step tutorial of how to use the code.

@@ -1,23 +1,14 @@
 import os
-import os.path as pth
-import sys
-sys.path.append('/home/murakami/lib/python2.7/site-packages/')
-                                        # remove this line!
-from brian import *
-from brian.hears import *
+from brian import kHz, Hz, exp, isinf
+from brian.hears import Sound, erbspace, loadsound, DRNL
 from scipy.signal import resample
 from VTL_API.parWav_fun import parToWave
+#from VTL_API.par_to_wav import par_to_wav
 import numpy as np
-import gzip
-import argparse
 import matplotlib
 matplotlib.use('Agg')                  # for use on clusters
 import Oger
-import mdp
 import pylab
-import scipy as sp
-import random
-from mpi4py import MPI
 from datetime import date
 import cPickle
 
@@ -49,8 +40,7 @@ playback = False                   # only relevant if n_workers == 1
 
 
 uncompressed = False
-#n_vow = 5                               # number of reservoir output units
-N = 100                                  # size of trained reservoir
+n_vow = 5                               # number of reservoir output units
 lib_syll =  ['/a/','/i/','/u/','[o]','[e]','[E:]','[2]','[y]','[A]','[I]','[E]','[O]','[U]','[9]','[Y]','[@]','[@6]']
                                         # global syllable library
 
@@ -58,9 +48,6 @@ lib_syll =  ['/a/','/i/','/u/','[o]','[e]','[E:]','[2]','[y]','[A]','[I]','[E]',
 np.random.seed()                        # numpy random seed w.r.t. global runtime
 Oger.utils.make_inspectable(Oger.nodes.LeakyReservoirNode)
                                         # make reservoir states inspectable for plotting
-
-
-#speaker = 'adult'                        # declare speaker type of agent
 
 
 
@@ -71,8 +58,6 @@ if False:
     print 'playing back produced sound:', playback
     print 'using trained reservoir with', N, 'reservoir units and', n_vow, 'output units'
     print 'plotting classifier states:', plots
-#    print "agent's speaker type:", speaker
-#    print 'current motor parameters:\n', params
 
 
 
@@ -101,7 +86,7 @@ def correct_initial(sound):
 #*********************************************************
 
 
-def get_resampled(sound):		
+def get_resampled(sound):
   """ function for adapting sampling frequency to AN model
 	    VTL samples with 22kHz, AN model requires 50kHz"""
 
@@ -118,7 +103,7 @@ def get_resampled(sound):
 #*********************************************************
 
 
-def get_extended(sound):		
+def get_extended(sound):
   """ function for adding silent period to shortened vowel
 	     ESN requires all samples to have the same dimensions"""
 
@@ -145,7 +130,6 @@ def drnl(sound, n_channels=50):
   out = drnl_filter.process()           # get array of channel activations
   if not uncompressed:
       out = out.clip(0.0)                    # -> fast oscillations can't be downsampled otherwise
-#      out = resample(out, int(round(sound.nsamples/100.0)))
                                         # downsample sound for memory reasons
       out = resample(out, int(round(sound.nsamples/1000.0)))
   return out
@@ -162,7 +146,7 @@ def get_output_folder(subfolder):
   outputpath_short = 'output/'+today_string
                                         # date yields super folder
   outputpath = 'output/'+today_string+'/'+subfolder+'/'
-                                        # date + subfolder yields working folder    
+                                        # date + subfolder yields working folder
   return outputpath
 
 
@@ -171,11 +155,12 @@ def get_output_folder(subfolder):
 
 def plot_reservoir_states(flow, y, i_target, folder, n_vow, rank):
 
-    global N, lib_syll, subfolder
+    global lib_syll, subfolder
     """ plot reservoir states"""
 
 
     current_flow = flow[0].inspect()[0].T # reservoir activity for most recent item
+    N = flow[0].output_dim              # reservoir size
 
     n_subplots_x, n_subplots_y = 2, 1   # arrange two plots in one column
     pylab.subplot(n_subplots_x, n_subplots_y, 1)
@@ -194,11 +179,7 @@ def plot_reservoir_states(flow, y, i_target, folder, n_vow, rank):
     pylab.title("Class activations")
     pylab.ylabel("Class")
     pylab.xlabel('')
-    if N > 20:
-      pylab.yticks(range(n_vow+1), lib_syll[:n_vow]+['null'])
-    else:
-      pylab.yticks(range(n_vow), ['a', 'u', 'i'])
-#    pylab.xticks(range(0, 350, 50), np.arange(0.0, 0.7, 0.1))
+    pylab.yticks(range(n_vow+1), lib_syll[:n_vow]+['null'])
     pylab.xticks(range(0, 35, 5), np.arange(0.0, 0.7, 0.1))
     cb = pylab.colorbar(class_activity)
 
@@ -219,10 +200,9 @@ def plot_reservoir_states(flow, y, i_target, folder, n_vow, rank):
                                         #  adjust to get uniform aspect for all N
     pylab.title("Reservoir states")
     pylab.xlabel('Time (s)')
-#    pylab.xticks(range(0, 350, 50), np.arange(0.0, 0.7, 0.1))
     pylab.xticks(range(0, 35, 5), np.arange(0.0, 0.7, 0.1))
     pylab.ylabel("Neuron")
-    pylab.yticks(range(0,N,N/7))     
+    pylab.yticks(range(0,N,N/7))
     cb2 = pylab.colorbar(reservoir_activity)
 
     pylab.savefig(folder+'data/vowel_'+str(i_target)+'_'+str(rank)+'.pdf')
@@ -278,12 +258,12 @@ def get_reward(mean_sample_vote, sound_extended, i_target, speaker, loudness_fac
         if isinf(level):
             level = 0.0
         loudness_reward = level - target_loudness[i_target]
-    
+
         if loudness_reward > 0.0:
             loudness_reward = 0.0
 
         reward += loudness_factor * loudness_reward
-    
+
 
 
     return reward
@@ -299,10 +279,10 @@ def normalize_activity(x):
     maximum = x.max()
     range_ = maximum - minimum
     bias = abs(maximum) - abs(minimum)
-    
+
     x_normalized -= bias/2.0
     x_normalized /= range_/2.0
-    
+
     return x_normalized
 
 
@@ -316,19 +296,17 @@ def normalize_activity(x):
 
 
 
-def evaluate_environment(params, i_global, simulation_name, outputfolder, i_target=0, rank=1, speaker='adult', n_vow=5, biased=False, N_reservoir=100, normalize=False, reg=False):
+def evaluate_environment(params, i_global, simulation_name, outputfolder, i_target=0, rank=1, speaker='adult', n_vow=5, normalize=False):
 
-    global N
-
-    N = N_reservoir
     folder = outputfolder
- 
+
     ############### Sound generation
 
     if output:
      print 'simulating vocal tract'
 
     wavFile = parToWave(params, speaker, simulation_name, verbose=output, rank=rank) # call parToWave to generate sound file
+#    wavFile = par_to_wav(params, speaker, simulation_name, verbose=output, rank=rank) # call parToWave to generate sound file
     if output:
      print 'wav file '+str(wavFile)+' produced'
 
@@ -348,7 +326,6 @@ def evaluate_environment(params, i_global, simulation_name, outputfolder, i_targ
                                         # call get_extended to equalize duration of all sounds
     sound_extended.save(wavFile)        # save current sound as sound file
 
-#    if rank==1:
     os.system('cp '+wavFile+' '+folder+'data/vowel_'+str(i_target)+'_'+str(rank)+'.wav')
 
     if playback:
@@ -364,13 +341,7 @@ def evaluate_environment(params, i_global, simulation_name, outputfolder, i_targ
 
     ############### Classifier evaluation
 
-    if biased:
-        flow_name = str(n_vow)+'vow_N'+str(N_reservoir)+'_biased.flow'
-    else:
-        flow_name = str(n_vow)+'vow_N'+str(N_reservoir)+'.flow'
-    if reg:
-        flow_name = str(n_vow)+'vow_N'+str(N_reservoir)+'_reg.flow'
-                                        # declare name of trained classifier
+    flow_name = 'data/current_auditory_system.flow'
     flow_file = open(flow_name, 'r')    # open classifier file
     flow = cPickle.load(flow_file)      # load classifier
     flow_file.close()                   # close classifier file
@@ -386,8 +357,6 @@ def evaluate_environment(params, i_global, simulation_name, outputfolder, i_targ
 
     confidences = get_confidences(mean_sample_vote)
 
-
-#    if rank==1 and (i_target>-1):
     plot_reservoir_states(flow, sample_vote, i_target, folder, n_vow, rank)
 
 

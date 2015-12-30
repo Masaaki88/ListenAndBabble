@@ -6,7 +6,6 @@ from os import path as pth
 
 
 def get_dic(p):             # convert input parameters to dictionary
-# table = {'HX':p[0], 'HY':p[1], 'JA':p[2], 'LP':p[3], 'LD':p[4], 'VS':p[5], 'TCX':p[6], 'TCY':p[7], 'TTX':p[8], 'TTY':p[9], 'TBX':p[10], 'TBY':p[11], 'TRX':p[12], 'TRY':p[13], 'TS1':p[14], 'TS2':p[15], 'TS3':p[16], 'TS4':p[17]}
  table = {'HX':p[0], 'HY':p[1], 'JA':p[2], 'LP':p[3], 'LD':p[4], 'VS':p[5], 'TCX':p[6], 'TCY':p[7], 'TTX':p[8], 'TTY':p[9], 'TBX':p[10], 'TBY':p[11], 'TS1':p[12], 'TS2':p[13], 'TS3':p[14], 'TS4':p[15]}
  return table
 
@@ -20,7 +19,7 @@ def get_dic(p):             # convert input parameters to dictionary
 
 
 def create_speaker(speaker, params, name, verbose=False, rank=1):	# main function takes output file name and returns output file name with output path
-					                    #  params: float[18] vector for vocal tract configuration
+					                    #  params: float[16] vector for vocal tract configuration
  if (speaker!='adult') and (speaker!='infant'):
     print 'Error: no valid speaker detected!'
     print 'Choose either "adult" or "infant" speaker.'

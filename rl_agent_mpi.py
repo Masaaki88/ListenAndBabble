@@ -38,8 +38,6 @@ lambda_ = n_workers - 1
 np.random.seed()                        # numpy random seed w.r.t. global runtime
 np.random.seed(np.random.randint(256) * rank)
                                         # numpy random seed w.r.t. worker
-#random.seed(np.random.randint(256) * rank)
-                                        # random seed w.r.t. worker
 
 
 ###########################################################
@@ -49,7 +47,6 @@ np.random.seed(np.random.randint(256) * rank)
 parser = argparse.ArgumentParser()
 parser.add_argument('-v', '--verbose', action='store_true', help='increase verbosity?')
 parser.add_argument('-f', '--folder', nargs='?', type=str, default='', help='subfolder to store results in')
-#parser.add_argument('-n', '--n_samples', nargs='?', type=int, default=100, help='number of samples')
 parser.add_argument('-t', '--target', nargs='?', type=str, default='a', help='target vowel for imitation')
 parser.add_argument('-p', '--parameters', nargs='*', type=str, default=['TCX'], help='vocal tract parameters to learn')
 parser.add_argument('-s', '--sigma', nargs='?', type=float, default=0.4, help='step-size = sigma')
@@ -61,13 +58,11 @@ parser.add_argument('-T', '--threshold', nargs='?', type=float, default=0.5, hel
 parser.add_argument('-P', '--predefined', action='store_true', help='initialize with predefined configuration?')
 parser.add_argument('-e', '--energy_factor', nargs='?', type=float, default=0.1, help='energy balance factor')
 parser.add_argument('-a', '--alpha', nargs='?', type=float, default=1.0, help='alpha for constraint penalty')
-parser.add_argument('-b', '--biased', action='store_true', help='use biased ESN?')
-parser.add_argument('-R', '--N_reservoir', nargs='?', type=int, default=100, help='size of used ESN')
 parser.add_argument('-r', '--resample', action='store_true', help='resample invalid motor parameters?')
 parser.add_argument('-o', '--normalize', action='store_true', help='normalize ESN output?')
-parser.add_argument('-c', '--no_convergence', action='store_true', help='turn off convergence?')
-parser.add_argument('-A', '--random_restart', action='store_true', help='restart search after bad solution from random learnt variables?')
-parser.add_argument('-g', '--regularized', action='store_true', help='use regularized network?')
+parser.add_argument('-c', '--no_convergence', action='store_true', help='turn off convergence criterion?')
+parser.add_argument('-A', '--random_restart', action='store_true', 
+                        help='restart search after bad solution from random learnt variables?')
 parser.add_argument('-L', '--load_state', nargs='?', type=str, default=None, help='load saved state?')
 parser.add_argument('-C', '--conditioning_maximum', nargs='?', type=float, default=1e14, help='maximal conditioning number')
 parser.add_argument('-w', '--no_reward_convergence', action='store_true', help='ignore reward for convergence?')
@@ -76,19 +71,19 @@ parser.add_argument('-n', '--n_trials', nargs='?', type=int, default=1, help='nu
 parser.add_argument('-F', '--flat_tongue', action='store_true', help='simulate flat tongue, i.e. set all TS to 0?')
 parser.add_argument('-d', '--debug', action='store_true', help='turn on debug mode?')
 parser.add_argument('-k', '--constant_sigma0', action='store_true', help='keep sigma 0 constant?')
+parser.add_argument('-X', '--default_settings', action='store_true', help='use default settings?')
 
 # usage:
 #  $ salloc -p sleuths -n (lambda/int) mpirun python rl_agent_mpi.py [-v] [-n (n_samples/int)] [-f (folder/str)] [-t (target/str)]
 #     [-p (parameters/str)] [-s (sigma/float)] [-i] [-N (n_vowels/int)] [-m] [-I] [-T (threshold/float)] [-P] [-e (energy_factor/float)]
-#     [-a (alpha/float)] [-b] [-F]
+#     [-a (alpha/float)] [-F]
 
 # thesis settings:
-#   salloc -p sleuths -n 100 mpirun python rl_agent_mpi.py -f default_output_folder -p all -i -m -I -R 1000 -r -o -A -g -C -w -b
+#   salloc -p sleuths -n 100 mpirun python rl_agent_mpi.py -f default_output_folder -p all -i -m -I -r -o -A -w -c
 
 args = parser.parse_args()
 verbose = args.verbose
 folder = args.folder
-#i_stop = args.n_samples
 target = args.target
 parameters = args.parameters
 sigma0 = args.sigma
@@ -100,13 +95,10 @@ conf_threshold = args.threshold
 predefined = args.predefined
 energy_factor = args.energy_factor
 alpha = args.alpha
-biased = args.biased
-N_reservoir = args.N_reservoir
 resample = args.resample
 normalize = args.normalize
 no_convergence = args.no_convergence
 random_restart = args.random_restart
-reg = args.regularized
 load_state = args.load_state
 cond_stop = args.conditioning_maximum
 no_reward_convergence = args.no_reward_convergence
@@ -115,12 +107,32 @@ n_trials = args.n_trials
 flat_tongue = args.flat_tongue
 debug = args.debug
 constant_sigma0 = args.constant_sigma0
+default_settings = args.default_settings
 
 N = len(parameters)                 # number of dimensions
+
+if n_workers == 1:      # serial mode -> disable parallel features
+    lambda_list = [4,6,7,8,8,9,9,10,10,10,11,11,11,11,12,12,12,12]
+        # list of recommended lambda values for given number of
+        #  dimenions (see Hansen)                    
+    lambda_ = lambda_list[N-1]
+
+if default_settings:    # shortcut for default settings
+                        # -> get rid of alternative settings?
+    infant = True
+    intrinsic_motivation = True
+    resample = True
+    normalize = True
+    random_restart = True
+    no_reward_convergence = True
+    no_convergence = True
+
 if infant:                          # declare speaker
     speaker = 'infant'
 else:
     speaker = 'adult'
+
+
 
 
 
@@ -136,25 +148,21 @@ def get_abs_coord(x):
     function for coordinate transformation from relative to absolute coordinates
     -> computations take place in relative coordinates (boundary conditions), 
         the vocal tract model uses absolute coordinates.
-     - argument x: numpy.array of length 18, contains relative coordinates in [0,1]
+     - argument x: numpy.array of length 16, contains relative coordinates in [0,1]
      - global infant: boolean defining if infant coordinate system is used
-     - output abs_coord: numpy.array of length 18, contains absolute coordinates
+     - output abs_coord: numpy.array of length 16, contains absolute coordinates
     """
     global infant
 
     if infant:                      # case: agent uses infant system
-#        low_boundaries = np.array([0.0, -3.228, -7.0, -1.0, -1.102, 0.0, -3.194, -1.574, 0.873, -1.574, -3.194, -1.574, -4.259, -3.228, -1.081, -1.081, -1.081, -1.081])
-        low_boundaries = np.array([0.0, -3.228, -7.0, -1.0, -1.102, 0.0, -3.194, -1.574, 0.873, -1.574, -3.194, -1.574, -1.081, -1.081, -1.081, -1.081])
+        low_boundaries = np.array([0.0, -3.228, -7.0, -1.0, -1.102, 0.0, -3.194, -1.574, 0.873, -1.5744, -3.194, -1.574, -1.081, -1.081, -1.081, -1.081])
                                     # lowest physiological parameter values
-#        high_boundaries = np.array([1.0, -1.85, 0.0, 1.0, 2.205, 1.0, 2.327, 0.63, 3.2, 1.457, 2.327, 2.835, 1.163, 0.079, 1.081, 1.081, 1.081, 1.081])
         high_boundaries = np.array([1.0, -1.85, 0.0, 1.0, 2.205, 1.0, 2.327, 0.63, 3.2, 1.457, 2.327, 2.835, 1.081, 1.081, 1.081, 1.081])
                                     # highest physiological parameter values
     else:                           # case: agent uses adult system
-        low_boundaries = np.array([0.0, -6.0, -7.0, -1.0, -2.0, 0.0, -3.0, -3.0, 1.5, -3.0, -3.0, -3.0, -4.0, -6.0, -1.4, -1.4, -1.4, -1.4])
-        high_boundaries = np.array([1.0, -3.5, 0.0, 1.0, 4.0, 1.0, 4.0, 1.0, 5.5, 2.5, 4.0, 5.0, 2.0, 0.0, 1.4, 1.4, 1.4, 1.4])
+        low_boundaries = np.array([0.0, -6.0, -7.0, -1.0, -2.0, 0.0, -3.0, -3.0, 1.5, -3.0, -3.0, -3.0, -1.4, -1.4, -1.4, -1.4])
+        high_boundaries = np.array([1.0, -3.5, 0.0, 1.0, 4.0, 1.0, 4.0, 1.0, 5.5, 2.5, 4.0, 5.0, 1.4, 1.4, 1.4, 1.4])
 
-#    abs_coord = np.zeros(18)        # prepare output
-#    for i in xrange(18):            # loop over all coordinates
     abs_coord = np.zeros(16)        # prepare output
     for i in xrange(16):            # loop over all coordinates
         abs_coord[i] = low_boundaries[i] + x[i] * (high_boundaries[i] - low_boundaries[i])
@@ -171,31 +179,27 @@ def get_rel_coord(x):
     function for coordinate transformation from absolute to relative coordinates
     -> computations take place in relative coordinates (boundary conditions), 
         the vocal tract model uses absolute coordinates.
-     - argument x: numpy.array of length 18, contains absolute coordinates
+     - argument x: numpy.array of length 16, contains absolute coordinates
      - global infant: boolean defining if infant coordinate system is used
-     - output rel_coord: numpy.array of length 18, contains relative coordinates
+     - output rel_coord: numpy.array of length 16, contains relative coordinates
     """
     global infant
 
     if infant:                      # case: agent uses infant system
-#        low_boundaries = np.array([0.0, -3.228, -7.0, -1.0, -1.102, 0.0, -3.194, -1.574, 0.873, -1.574, -3.194, -1.574, -4.259, -3.228, -1.081, -1.081, -1.081, -1.081])
-        low_boundaries = np.array([0.0, -3.228, -7.0, -1.0, -1.102, 0.0, -3.194, -1.574, 0.873, -1.574, -3.194, -1.574, -1.081, -1.081, -1.081, -1.081])
+        low_boundaries = np.array([0.0, -3.228, -7.0, -1.0, -1.102, 0.0, -3.194, -1.574, 0.873, -1.5744, -3.194, -1.574, -1.081, -1.081, -1.081, -1.081])
                                     # lowest physiological parameter values
-#        high_boundaries = np.array([1.0, -1.85, 0.0, 1.0, 2.205, 1.0, 2.327, 0.63, 3.2, 1.457, 2.327, 2.835, 1.163, 0.079, 1.081, 1.081, 1.081, 1.081])
         high_boundaries = np.array([1.0, -1.85, 0.0, 1.0, 2.205, 1.0, 2.327, 0.63, 3.2, 1.457, 2.327, 2.835, 1.081, 1.081, 1.081, 1.081])
                                     # highest physiological parameter values
     else:                           # case: agent uses adult system
-        low_boundaries = np.array([0.0, -6.0, -7.0, -1.0, -2.0, 0.0, -3.0, -3.0, 1.5, -3.0, -3.0, -3.0, -4.0, -6.0, -1.4, -1.4, -1.4, -1.4])
-        high_boundaries = np.array([1.0, -3.5, 0.0, 1.0, 4.0, 1.0, 4.0, 1.0, 5.5, 2.5, 4.0, 5.0, 2.0, 0.0, 1.4, 1.4, 1.4, 1.4])
+        low_boundaries = np.array([0.0, -6.0, -7.0, -1.0, -2.0, 0.0, -3.0, -3.0, 1.5, -3.0, -3.0, -3.0, -1.4, -1.4, -1.4, -1.4])
+        high_boundaries = np.array([1.0, -3.5, 0.0, 1.0, 4.0, 1.0, 4.0, 1.0, 5.5, 2.5, 4.0, 5.0, 1.4, 1.4, 1.4, 1.4])
 
-#    rel_coord = np.zeros(18)        # prepare output
-#    for i in xrange(18):            # loop over all coordinates
     rel_coord = np.zeros(16)        # prepare output
     for i in xrange(16):            # loop over all coordinates
         rel_coord[i] = (x[i] - low_boundaries[i]) / (high_boundaries[i] - low_boundaries[i])
                                     # coordinate transformation
                                     # -> for each coordinate: 0 is lowest physiological value, 1 is highest physiological value
-                                    # -> [0,1]^18 cube is search domain
+                                    # -> [0,1]^16 cube is search domain
     return rel_coord
 
 
@@ -203,12 +207,7 @@ def get_rel_coord(x):
 ### prepare motor parameters
 ###########################################################
 
-'''
-params_i = np.array([0.8580, -2.9237, -1.8808, -0.0321, 0.5695, 0.1438, 0.6562, -0.3901, 2.6431, -0.6510, 2.1213, 0.3124, -1.2385, -0.5088, 0.3674, 0.034, -0.1274, -0.2887])
-params_u = np.array([0.9073, -3.2279, -4.0217, 1.0, 0.3882, 0.5847, 0.3150, -0.5707, 2.0209, -1.0122, 1.8202, -0.1492, -1.2155, -0.8928, 0.5620, 0.1637, 0.0602, -0.0386])
-params_a = np.array([0.3296, -2.3640, -4.3032, 0.0994, 0.8196, 1.0, -0.4878, -1.2129, 1.9036, -1.5744, 1.3212, -1.0896, -2.4673, -1.7963, 1.0313, -0.1359, 0.4925, 0.0772])
-params_schwa = np.array([1.0, -2.643, -2.0, -0.07, 0.524, 0.0, -0.426, -0.767, 2.036, -0.578, 1.163, 0.321, -1.853, -1.7267, 0.0, 0.046, 0.116, 0.116])
-#'''
+
 params_i = np.array([0.8580, -2.9237, -1.8808, -0.0321, 0.5695, 0.1438, 0.6562, -0.3901, 2.6431, -0.6510, 2.1213, 0.3124, 0.3674, 0.034, -0.1274, -0.2887])
 params_u = np.array([0.9073, -3.2279, -4.0217, 1.0, 0.3882, 0.5847, 0.3150, -0.5707, 2.0209, -1.0122, 1.8202, -0.1492, 0.5620, 0.1637, 0.0602, -0.0386])
 params_a = np.array([0.3296, -2.3640, -4.3032, 0.0994, 0.8196, 1.0, -0.4878, -1.2129, 1.9036, -1.5744, 1.3212, -1.0896, 1.0313, -0.1359, 0.4925, 0.0772])
@@ -223,7 +222,6 @@ params_ad_u = np.array([1.0, -5.6308, -4.0217, 1.0, 0.2233, 0.5847, 0.6343, -0.9
                                     # set of known parameters, ad refers to adult parameters, rest refers to infant parameters
                                     # -> absolute coordinates
 
-#par_table = {'HX':0, 'HY':1, 'JA':2, 'LP':3, 'LD':4, 'VS':5, 'TCX':6, 'TCY':7, 'TTX':8, 'TTY':9, 'TBX':10, 'TBY':11, 'TRX':12, 'TRY':13, 'TS1':14, 'TS2':15, 'TS3':16, 'TS4':17}
 par_table = {'HX':0, 'HY':1, 'JA':2, 'LP':3, 'LD':4, 'VS':5, 'TCX':6, 'TCY':7, 'TTX':8, 'TTY':9, 'TBX':10, 'TBY':11, 'TS1':12, 'TS2':13, 'TS3':14, 'TS4':15}
                                     # look up dictionary for parameter indices
                                     #  -> complete set of all parameters are handed to the environment
@@ -234,10 +232,6 @@ if rank==1:
     print 'parameters:', parameters
 
 if parameters == ['all']:           # case: full-dimensional problem
-    '''
-    parameters_indices = range(18)  # all 18 parameters are being learnt
-    N = 18                          # change dimension from 1 to 18 
-    #'''
     parameters_indices = range(16)  # all 16 parameters are being learnt
     N = 16                          # change dimension from 1 to 16 
 elif parameters == ['flat']:
@@ -306,7 +300,6 @@ if not predefined:                  # case: initial condition is schwa @
 
 params_r = get_rel_coord(params)    # transform parameters into relative coordinates
                                     # -> search space should be physiological space, i.e. [0,1]^N cube
-#params_r_initial = params_r.copy()
 if verbose and rank==1:
     print 'params:', params
 
@@ -366,7 +359,7 @@ def parallel_evaluation(x_mean, sigma, B_D, i_count, i_target):
       - boundary_penalty: numpy.array of length lambda, corresponding boundary penalty for each slave's sample
     """
 
-    global n_workers, verbose, n_vowels, N_reservoir, lambda_, N
+    global n_workers, verbose, n_vowels, lambda_, N
 
     items_broadcast = x_mean,sigma,B_D,i_count,i_target
                                         # whatever the master distributes to the slaves
@@ -382,24 +375,14 @@ def parallel_evaluation(x_mean, sigma, B_D, i_count, i_target):
     x = np.zeros([lambda_, N])
     N_resampled = np.zeros([lambda_, N], dtype=int)
 
-#    if verbose:
     print 'current tag (master):', tag
 
 
     for i_worker in xrange(1,n_workers):
-#        if verbose:
-#            print 'master attempting to send values to slave', i_worker, 'with tag', tag
         comm.send(items_broadcast, dest=i_worker, tag=tag)
-#        if verbose:
-#            print 'master sent values to slave', i_worker
     for i_worker in xrange(1,n_workers):
-#        if verbose:
-#            print 'z[i_worker-1]:', z[i_worker-1], ', x[i_worker-1]:', x[i_worker-1], ', fitness[i_worker-1]:', fitness[i_worker-1]
-#            print 'master attempting to receive values from slave', i_worker, 'with tag', tag
 
         z[i_worker-1],x[i_worker-1],confidences[i_worker-1],energy_cost[i_worker-1],boundary_penalty[i_worker-1],N_resampled[i_worker-1] = comm.recv(source=i_worker, tag=tag)
-#        if verbose:
-#            print 'master received values from slave', i_worker
 
     N_resampled_sum = N_resampled.sum()
     if verbose:
@@ -411,17 +394,101 @@ def parallel_evaluation(x_mean, sigma, B_D, i_count, i_target):
 
 
 
+def serial_evaluation(x_mean, sigma, B_D, i_count, i_target):
+    """
+    evaluate rewards if only one worker exists
+    -> interface of agent and environment, called during each environment evaluation
+    -> executed only by master
+     - arguments:
+      - x_mean: numpy.array of length N, mean of current sampling distribution
+      - sigma: float, width of current sampling distribution
+      - B_D: numpy.array of shape (N,N), covariance matrix of current sampling distribution
+      - i_count: int, current iteration step
+      - i_target: int, index of current target vowel      
+     - globals:
+      - n_workers: int, number of worker (=slaves+master)
+      - verbose: bool, for printed stuff
+      - n_vowels: int, total number of target vowels
+     - outputs:
+      - z: numpy.array of shape (lambda, N), sampled z values of each slave for each coordinate
+      - x: numpy.array of shape (lambda, N), corresponding parameter values of each slave for each coordinate
+      - confidences: numpy.array of shape (lambda, n_vowels+1), corresponding confidence levels for each target vowel + null class
+      - energy_cost: numpy.array of length lambda, corresponding energy penalty for each slave's sample
+      - boundary_penalty: numpy.array of length lambda, corresponding boundary penalty for each slave's sample
+    """
+
+    global verbose, n_vowels, lambda_, N
+
+
+    confidences = np.zeros([lambda_,n_vowels+1])
+    energy_cost = np.zeros(lambda_)
+    boundary_penalty = np.zeros(lambda_)
+    z = np.zeros([lambda_, N])
+    x = np.zeros([lambda_, N])
+    N_resampled = -lambda_
+
+    for i in xrange(lambda_):   # offspring generation loop
+
+        invalid = True
+        print 'sampling parameters...'
+        if resample:
+          while invalid:
+            N_resampled += 1
+            z_i = np.random.randn(N)      # standard normally distributed vector
+            x_i = x_mean + sigma*(np.dot(B_D, z_i))  # add mutation, Eq. 37
+            invalid = (x_i < 0.0).any() or (x_i > 1.0).any()
+
+          boundary_penalty_i = 0.0
+        else:
+          N_resampled = 0
+          z_i = np.random.randn(N)          # standard normally distributed vector
+          x_i = x_mean + sigma*(np.dot(B_D, z_i)) # add mutation, Eq. 37
+          boundary_penalty_i = 0.0
+          if (x_i<0.0).any() or (x_i>1.0).any(): # check boundary condition
+            if verbose:
+                print 'boundary violated. repairing and penalizing.'
+            x_repaired = x_i.copy()       # repair sample
+            for i_component in xrange(len(x_i)):
+                if x_i[i_component] > 1.0:
+                    x_repaired[i_component] = 1.0
+                elif x_i[i_component] < 0.0:
+                    x_repaired[i_component] = 0.0
+            boundary_penalty_i = np.linalg.norm(x_i-x_repaired)**2
+                                        # penalize boundary violation, Eq. 51
+            x_i = x_repaired
+
+        z[i] = z_i
+        x[i] = x_i
+        boundary_penalty[i] = boundary_penalty_i
+ 
+        params_full = get_full_parameters(x_i, i_target)
+        energy_cost[i] = get_energy_cost(params_full)   
+        params_abs = get_abs_coord(params_full)
+
+        confidences[i] = evaluate_environment(params_abs, i_count, simulation_name=folder, outputfolder=outputfolder, i_target=i_target, rank=rank, speaker=speaker, n_vow=n_vowels, normalize=normalize)
+
+        # end of offspring generation loop
+
+    if verbose:
+        print N_resampled_sum, 'samples rejected'
+
+    return z, x, confidences, energy_cost, boundary_penalty, N_resampled
+
+
+
+
+
+
+
+
 
 def get_next_target(confidences, indices_learnt):
-    global n_vowels, verbose, N_reservoir
+    global n_vowels, verbose
 
     confidences_flat = confidences.flatten()
     confidences_argsort = confidences_flat.argsort()
     for i in xrange(len(confidences_argsort)-1, -1, -1):
-        if N_reservoir > 20:
-            i_next = np.mod(confidences_argsort[i], n_vowels+1)
-        else:
-            i_next = np.mod(confidences_argsort[i], n_vowels)
+        i_next = np.mod(confidences_argsort[i], n_vowels+1)
         if not i_next in indices_learnt:
             break
 
@@ -437,13 +504,10 @@ def get_next_target(confidences, indices_learnt):
 
 
 def get_deviations(params_r):
-    global params_i, params_u, params_a, params_ad_e, params_ad_a, params_ad_i, params_ad_o, params_ad_u, infant, N_reservoir
+    global params_i, params_u, params_a, params_ad_e, params_ad_a, params_ad_i, params_ad_o, params_ad_u, infant
 
     if infant:
-        if N_reservoir > 20:
-            params_targets = [params_a, params_i, params_u]
-        else:
-            params_targets = [params_a, params_u, params_i]
+        params_targets = [params_a, params_i, params_u]
     else:
         params_targets = [params_ad_a, params_ad_u, params_ad_i, params_ad_e, params_ad_o]
 
@@ -474,13 +538,11 @@ def get_energy_cost(params_r):
 
 
 def get_full_parameters(x, i_target):
-    global params_i, params_u, params_a, params_ad_e, params_ad_a, params_ad_i, params_ad_o, params_ad_u, infant, parameters_indices, N_reservoir, flat_tongue
+    global params_i, params_u, params_a, params_ad_e, params_ad_a, params_ad_i, params_ad_o, params_ad_u, infant, parameters_indices,\
+        flat_tongue
 
     if infant:
-        if N_reservoir > 20:
-            params_targets = [params_a, params_i, params_u]
-        else:
-            params_targets = [params_a, params_u, params_i]
+        params_targets = [params_a, params_i, params_u]
     else:
         params_targets = [params_ad_a, params_ad_u, params_ad_i, params_ad_e, params_ad_o]
         
@@ -498,19 +560,6 @@ def get_full_parameters(x, i_target):
 
 def save_state(state, flag):
     global outputfolder    
-
-    '''
-    save_dynamic = outputfolder+'save.dyn'
-    save_static = outputfolder+'save.stat'
-    os.system('rm '+save_dynamic)
-    os.system('rm '+save_static)
-    os.system('touch '+save_dynamic)
-    os.system('touch '+save_static)
-    save_file_dynamic = open(save_dynamic, 'w')
-    save_file_static = open(save_static, 'w')
-    results_write.close()
-    save_file_dynamic.close()
-    '''
 
     save_file = outputfolder+'save.'+flag
     os.system('rm '+save_file)
@@ -543,8 +592,12 @@ def now():
 
 
 def cmaes():                        # actual CMA-ES part
-#    global N, verbose, params_r, n_workers, rank, i_stop, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, i_target, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder, random_restart, load_state, cond_stop, i_start, no_reward_convergence, ptp_stop, speaker
-    global N, verbose, params_r, n_workers, rank, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, i_target, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder, random_restart, load_state, cond_stop, i_start, no_reward_convergence, ptp_stop, speaker, flat_tongue, record_scalars, record_B_D, record_z, record_x, record_confidences, record_fitness, record_params_abs, record_x_mean, record_params_r, record_p_c, record_p_s, record_C, record_D, record_fitness_recent, record_ptp_fitness_recent, record_x_recent, record_ptp_x_recent, debug, records, constant_sigma0
+    global N, verbose, params_r, n_workers, rank, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation,\
+        i_target, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder, random_restart, load_state, cond_stop,\
+        i_start, no_reward_convergence, ptp_stop, speaker, flat_tongue, record_scalars, record_B_D, record_z, record_x,\
+        record_confidences, record_fitness, record_params_abs, record_x_mean, record_params_r, record_p_c, record_p_s, record_C,\
+        record_D, record_fitness_recent, record_ptp_fitness_recent, record_x_recent, record_ptp_x_recent, debug, records,\
+        constant_sigma0
 
     #######################################################
     # Initialization
@@ -555,13 +608,13 @@ def cmaes():                        # actual CMA-ES part
     outputfolder_old = None
     if not load_state == None:
         static_params, dynamic_params = load_saved_state(load_state)
-#        [N, verbose, params_r, i_stop, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder_old, random_restart, cond_stop] = static_params
-        [N, verbose, params_r, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder_old, random_restart, cond_stop, flat_tongue] = static_params
+        [N, verbose, params_r, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, n_vowels, 
+            energy_factor, alpha, no_convergence, outputfolder_old, random_restart, cond_stop, flat_tongue] = static_params
         print 'loaded static parameters:'
         print 'N:', N, '\nverbose:', verbose, '\nparams_r:', params_r, '\nparameters_indices:', parameters_indices, '\nsigma0:',\
             sigma0, '\nparams_r_target:', params_r_target, '\nconf_threshold:', conf_threshold, '\nintrinsic_motivation:',\
-            intrinsic_motivation, '\nn_vowels:', n_vowels, '\nenergy_factor:', energy_factor, '\nalpha:', alpha, '\nN_reservoir:',\
-            N_reservoir, '\nno_convergence:', no_convergence, '\noutputfolder_old:', outputfolder_old, '\nrandom_restart:',\
+            intrinsic_motivation, '\nn_vowels:', n_vowels, '\nenergy_factor:', energy_factor, '\nalpha:', alpha,\
+            '\nno_convergence:', no_convergence, '\noutputfolder_old:', outputfolder_old, '\nrandom_restart:',\
             random_restart, '\ncond_stop:', cond_stop, '\nflat_tongue:', flat_tongue
 
 
@@ -580,11 +633,6 @@ def cmaes():                        # actual CMA-ES part
     print '[508] fitness_recent:', fitness_recent
     vowel_list = ['a', 'i', 'u', '@']
     motor_memory = []
-
-    # Strategy parameter setting: Selection
-#    lambda_ = int(4.0 + np.floor(3.0*np.log(N)))
-#    lambda_ = n_workers - 1
-
                                     # population size, offspring number
     if verbose:
         print 'lambda =', lambda_, ',  n_workers =', n_workers-1
@@ -600,10 +648,6 @@ def cmaes():                        # actual CMA-ES part
     print '[503] mu_eff:', mu_eff
 
     convergence_interval = int(10+np.ceil(30.0*N/lambda_))       # window for convergence test
-
-                                    #  with less standard deviation than std_stop
-#    ptp_stop = 1e-2#1e-3                # stop if function values in <convergence_interval> lie within range <ptp_stop>
-#    cond_stop = 1e14
     i_reset = 0
 
     # Strategy parameter setting: Adaptation
@@ -636,13 +680,8 @@ def cmaes():                        # actual CMA-ES part
     print '[537] chi_N:', chi_N
 
     # Initialize arrays
-#    z = np.zeros([lambda_, N])
-#    x = np.zeros([lambda_, N])
     fitness = np.zeros(lambda_)
-    if N_reservoir > 20:
-        indices_learnt = [n_vowels]     # last vowel index corresponds to null class
-    else:
-        indices_learnt = []
+    indices_learnt = [n_vowels]     # last vowel index corresponds to null class
     x_learnt = [[x_mean, 3]]
 
 
@@ -670,12 +709,9 @@ def cmaes():                        # actual CMA-ES part
 
     if debug:
         record_scalars.write('i_count   i_target   fitness_mean   h_sig   sigma   cond   N_resampled\n\n')
-#    results_write.write('a:steps   a:time   a:reward   i:steps   i:time   i:reward   u:steps   u:time   u:reward   steps   time\n\n')
 
-#    static_params = [N, verbose, params_r, i_stop, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder, random_restart, cond_stop]
-    static_params = [N, verbose, params_r, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, n_vowels, energy_factor, alpha, N_reservoir, no_convergence, outputfolder, random_restart, cond_stop, flat_tongue]
-#    cPickle.dump(static_params, save_file_static)
-#    save_file_static.close()
+    static_params = [N, verbose, params_r, parameters_indices, sigma0, params_r_target, conf_threshold, intrinsic_motivation, 
+        n_vowels, energy_factor, alpha, no_convergence, outputfolder, random_restart, cond_stop, flat_tongue]
     save_state(static_params, 'stat')
 
 
@@ -691,7 +727,8 @@ def cmaes():                        # actual CMA-ES part
 
     if not load_state == None:
       print 'loading state', load_state
-      [current_time, i_count, i_target, p_s , p_c, C, i_eigen, sigma, x_recent, fitness_recent, i_reset, current_sigma0, x_learnt, indices_learnt, B_D, x_mean] = dynamic_params
+      [current_time, i_count, i_target, p_s , p_c, C, i_eigen, sigma, x_recent, fitness_recent, i_reset, current_sigma0, x_learnt,\
+        indices_learnt, B_D, x_mean] = dynamic_params
       print 'current_time:', current_time, '\ni_count:', i_count, '\ni_target:', i_target, '\np_s:', p_s, '\np_c:', p_c, '\nC:', C,\
         '\ni_eigen:', i_eigen, '\nsigma:', sigma, '\nx_recent:', x_recent, '\nfitness_recent:', fitness_recent, '\ni_reset:',\
         i_reset, '\ncurrent_sigma0:', current_sigma0, '\nx_learnt:', x_learnt, '\nindices_learnt:', indices_learnt, '\nB_D:', B_D,\
@@ -701,17 +738,22 @@ def cmaes():                        # actual CMA-ES part
       for i_worker in xrange(1,n_workers):
           comm.send(i_start, dest=i_worker)
 
-    return_dict = {'a_steps':0, 'a_time':0, 'a_reward':0,'i_steps':0, 'i_time':0, 'i_reward':0,'u_steps':0, 'u_time':0, 'u_reward':0, 'steps':0, 'time':0}
+    return_dict = {'a_steps':0, 'a_time':0, 'a_reward':0,'i_steps':0, 'i_time':0, 'i_reward':0,'u_steps':0, 'u_time':0, 'u_reward':0,\
+        'steps':0, 'time':0}
 
     t_0 = datetime.datetime.now()
     t_reset = t_0
 
-#    while i_count < i_stop:
     while True:
 
       # Generate and evaluate lambda offspring
-#      B_D = np.dot(B,D)
-      z, x, confidences, energy_cost, boundary_penalty, N_resampled_trial = parallel_evaluation(x_mean, sigma, B_D, i_count, i_target)
+
+      if n_workers == 1:
+          z, x, confidences, energy_cost, boundary_penalty, N_resampled_trial = serial_evaluation(x_mean, 
+            sigma, B_D, i_count, i_target)
+      else:
+          z, x, confidences, energy_cost, boundary_penalty, N_resampled_trial = parallel_evaluation(x_mean, 
+            sigma, B_D, i_count, i_target)
 
       i_count += lambda_       
 
@@ -723,7 +765,6 @@ def cmaes():                        # actual CMA-ES part
 
         if no_convergence and (fitness < -conf_threshold).any():
                 i_argmax = fitness.argmin()
-#                print 'i_argmax:', i_argmax
                 x_mean = x[i_argmax]
                 x_learnt.append([x_mean, i_target])
 
@@ -734,12 +775,10 @@ def cmaes():                        # actual CMA-ES part
 
                 motor_memory.append([vowel_list[i_target], params_abs])
 
-#                '''
                 results_write.write(vowel_list[i_target]+'    '+str(i_count)+'    '+str(-fitness[i_argmax])+'    '+now()+'\n')
                 results_write.write('relative coordinates:\n '+str(params_full)+'\n')
                 results_write.write('absolute coordinates:\n '+str(params_abs)+'\n\n')
                 results_write.flush()
- #               '''
 
                 current_vowel = vowel_list[i_target]
                 return_dict[current_vowel+'_steps'] = i_count-i_reset
@@ -774,9 +813,6 @@ def cmaes():                        # actual CMA-ES part
                     current_sigma0 = sigma0               
                     sigma = current_sigma0
                     i_reset = 0
-
-#                    x_recent = deque()
-#                    fitness_recent = deque()
 
                 else:
                     print 'terminating.'
@@ -821,8 +857,6 @@ def cmaes():                        # actual CMA-ES part
                 output_write.write(str(confidence)+'  ')
             for deviation in deviations:
                 output_write.write(str(deviation)+'  ')
-#            for x_ in x_mean:
-#                output_write.write(str(x_)+'  ')
             output_write.write(str(energy_cost[0])+'  '+str(boundary_penalty[0])+'  '+str(sigma)+'  '+str(N_resampled_trial)+'\n')
             output_write.write('    rel coords: '+str(params_full)+'\n')
             output_write.write('    abs coords: '+str(params_abs)+'\n\n')
@@ -842,14 +876,9 @@ def cmaes():                        # actual CMA-ES part
 
             if not (np.isfinite(C_new)).all():
                 print 'Warning! C contains invalid elements!'
-                #print 'C:', C_new
-                #print 'repaired to C=', C
                 error = True
             else:
-                C = C_new
-                                        # regard old matrix plus rank one update plus minor correction plus rank mu update, Eq. 43
-#            if verbose:
-#                print 'C after adaptation:\n', C
+                C = C_new               # regard old matrix plus rank one update plus minor correction plus rank mu update, Eq. 43
     
             # Adapt step-size sigma
             sigma = sigma * np.exp((c_s/damps) * (np.linalg.norm(p_s)/chi_N - 1.0))
@@ -891,6 +920,7 @@ def cmaes():                        # actual CMA-ES part
 
 
             # Escape flat fitness, or better terminate?
+            print 'fitness:', fitness
             if fitness[0] == fitness[int(np.ceil(0.7*lambda_))]:
                 sigma *= np.exp(0.2+c_s/damps)
                 print 'warning: flat fitness, consider reformulating the objective'
@@ -944,7 +974,6 @@ def cmaes():                        # actual CMA-ES part
                     B_D = np.dot(B, D)           
                     C = np.dot(B_D, (B_D).T)
                     i_eigen = 0
-#                    i_reset += 1
 
                     if random_restart:
                         if current_sigma0 < 0.9 and not constant_sigma0:
@@ -966,19 +995,6 @@ def cmaes():                        # actual CMA-ES part
                 else:
                     print 'confidence:', -fitness[0], ', i_reset:', i_reset
                     indices_learnt.append(i_target)
-
-#                    params_full = get_full_parameters(x_mean, i_target)
-#                    params_abs = get_abs_coord(params_full)
-    
-                    '''
-                    results_write.write(vowel_list[i_target]+'    '+str(i_count)+'    '+str(-fitness[0])+'\n')
-                    results_write.write('relative coordinates:\n '+str(params_full)+'\n')
-                    results_write.write('absolute coordinates:\n '+str(params_abs)+'\n\n')
-                    results_write.flush()
-                    '''
-
-
-                    
     
                     if (len(indices_learnt) < n_vowels+1) and intrinsic_motivation:
                         i_target = -1
@@ -1012,8 +1028,6 @@ def cmaes():                        # actual CMA-ES part
 
         current_time = datetime.datetime.now()
         dynamic_params = [current_time, i_count, i_target, p_s , p_c, C, i_eigen, sigma, x_recent, fitness_recent, i_reset, current_sigma0, x_learnt, indices_learnt, B_D, x_mean]
-#        cPickle.dump(dynamic_params, save_file_dynamic)
-#        save_file_dynamic.flush()
         save_state(dynamic_params, 'dyn')
         if verbose:
             print 'saved dynamic parameters:'
@@ -1049,7 +1063,6 @@ def cmaes():                        # actual CMA-ES part
     return_dict['steps'] = i_count    
 
     x_min = x_mean
-#    save_state.close()
     if verbose:
         print 'x:', x
         print 'x_mean:', x_mean
@@ -1065,7 +1078,7 @@ def cmaes():                        # actual CMA-ES part
 
 
 def main(n_trials):
-  global rank, load_state, i_start, n_workers, resample, verbose, folder, speaker, n_vowels, biased, N_reservoir, normalize, reg, results_write, N
+  global rank, load_state, i_start, n_workers, resample, verbose, folder, speaker, n_vowels, normalize, results_write, N
 
   if rank==0:
       results_write.write('a:steps   a:time   a:reward   i:steps   i:time   i:reward   u:steps   u:time   u:reward   steps   time\n\n')
@@ -1079,17 +1092,11 @@ def main(n_trials):
     else:
         if not load_state == None:
             i_start = comm.recv(source=0)
-#        for i in xrange(int(i_start/(n_workers-1)), int(i_stop/(n_workers-1))):
         i = int(i_start/(n_workers-1))
         while True:
-            if rank==1:# and verbose:
-                print 'current tag (slave):', i
+            print 'current tag (slave):', i
 
-#            if verbose:
-#                print 'slave', rank, 'attempting to receive values with tag', i
             x_mean,sigma,B_D,i_count,i_target = comm.recv(source=0, tag=i)
-#            if verbose and rank==1:
-#                print 'slave', rank, 'received values: B_D =', B_D, ' N =', N, ' x_mean =', x_mean
             if x_mean == None:
                 break
 
@@ -1103,8 +1110,6 @@ def main(n_trials):
                 z = np.random.randn(N)      # standard normally distributed vector
                 x = x_mean + sigma*(np.dot(B_D, z))  # add mutation, Eq. 37
                 invalid = (x < 0.0).any() or (x > 1.0).any()
-#                if verbose:
-#                    print 'sample rejected. resampling.'
               boundary_penalty = 0.0
             else:
               N_resampled = 0
@@ -1128,23 +1133,16 @@ def main(n_trials):
             energy_cost = get_energy_cost(params_full)   
             params_abs = get_abs_coord(params_full)
 
-            '''
-            for j in xrange(len(x)):
-                params_r[parameters_indices[j]] = x[j]
-            params_abs = get_abs_coord(params_r)
-            '''
 
-            confidences = evaluate_environment(params_abs, i_count, simulation_name=folder, outputfolder=outputfolder, i_target=i_target, rank=rank, speaker=speaker, n_vow=n_vowels, biased=biased, N_reservoir=N_reservoir, normalize=normalize, reg=reg)
+            confidences = evaluate_environment(params_abs, i_count, simulation_name=folder, outputfolder=outputfolder,
+                i_target=i_target, rank=rank, speaker=speaker, n_vow=n_vowels, normalize=normalize)
 
             if rank==1 and verbose:
-                print 'z:', z, ', x:', x, ', confidences:', confidences, ', energy costs:', energy_cost, ', boundary penalties:', boundary_penalty
+                print 'z:', z, ', x:', x, ', confidences:', confidences, ', energy costs:', energy_cost, ', boundary penalties:',\
+                    boundary_penalty
 
             send_back = z,x,confidences,energy_cost,boundary_penalty,N_resampled
-#            if verbose:
-#                print 'slave', rank,'attempting to send values (x='+str(x)+') with tag', i
             comm.send(send_back, dest=0, tag=i)
-#            if verbose:
-#                print 'slave', rank,'sent values'
             i += 1
 
 

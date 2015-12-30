@@ -35,14 +35,6 @@ def parToWave(params, speaker='adult', simulation_name='', pitch_var=0.0, len_va
  areaFile = pth.relpath('VTL_API/output/'+name+'_'+str(rank)+'.txt')	# output area file
 
 
- '''
- params_u = ar([0.9073, -3.2279, 0.0, -4.0217, 1.0, 0.3882, 0.5847, -0.1, 0.3150, -0.5707, 2.0209, -1.0122, 1.8202, -0.1492, 0.5620, 0.1637, 0.0602, -0.0386])
- params_a = ar([0.3296, -2.3640, 0.0, -4.3032, 0.0994, 0.8196, 1.0, -0.1, -0.4878, -1.2129, 1.9036, -1.5744, 1.3212, -1.0896, 1.0313, -0.1359, 0.4925, 0.0772])
- params_i = ar([0.8580, -2.9237, -0.1488, -1.8808, -0.0321, 0.5695, 0.1438, -0.1, 0.6562, -0.3901, 2.6431, -0.6510, 2.1213, 0.3124, 0.3674, 0.034, -0.1274, -0.2887])
- params_schwa = ar([1.0, -2.643, 0.0, -2.0, -0.07, 0.524, 0.0, -0.1, 0.0, -0.426, -0.767, 2.036, -0.578, 1.163, 0.321, -1.853, -1.7267, 0.0, 0.046, 0.116, 0.116])
-                                                        # prototypical vowel shapes of infant speaker
- params = params_u                                      # arbitrary shape parameters for new speaker (for sensorimotor learning)
- '''
 
 
 
@@ -54,7 +46,6 @@ def parToWave(params, speaker='adult', simulation_name='', pitch_var=0.0, len_va
 
 
 
-# gestureFile = create_gesture(name, speaker, pitch_var, len_var)
  if speaker == 'adult':
   if monotone:
     gestureFile = pth.relpath('VTL_API/gestures/input_adult_monotone.ges')
@@ -106,7 +97,6 @@ def parToWave(params, speaker='adult', simulation_name='', pitch_var=0.0, len_va
  content = f.read()			# read content of wav file
 
  f.close()				# close wav file
-# remove(wavFile)				# delete wav file
  system('rm '+wavFile)
  system('touch '+wavFile)		# create empty file with the same name
 
@@ -121,7 +111,6 @@ def parToWave(params, speaker='adult', simulation_name='', pitch_var=0.0, len_va
 
  newfile.close()				# close new file
 
-# remove(backup)				# delete backup
  system('rm '+backup)
 
  return wavFile

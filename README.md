@@ -10,8 +10,9 @@ The code is written in Python 2.7 and was tested in Ubuntu 14.04. Apart from sta
 - [brian](http://brian.readthedocs.org/en/latest/installation.html)
 - [Oger](http://reservoir-computing.org/installing_oger)
 - [mpi4py](https://pypi.python.org/pypi/mpi4py)
+- [docopt](https://pypi.python.org/pypi/docopt)
 
 Additionally, you'll need the VocalTractLab API for Linux, which you can download [here](http://vocaltractlab.de/index.php?page=vocaltractlab-download).
-After downloading it, extract the content into the VTL_API subfolder.
+After downloading it, extract the VocalTractLabApi.so into the VTL_API subfolder.
 
 example.py provides a step-by-step tutorial of how to use the code.
